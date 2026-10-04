@@ -1,5 +1,8 @@
-fastapi
+﻿fastapi
 uvicorn
 rembg[cpu]
+opencv-python-headless
+pillow
 python-multipart
-Pillow
+numpy
+
