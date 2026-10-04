@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+rembg[cpu]
+python-multipart
+Pillow

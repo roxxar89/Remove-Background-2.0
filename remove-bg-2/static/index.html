@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remove-BG-2</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .dashed-border { border: 2px dashed #cbd5e1; }
+        .drag-over { border-color: #3b82f6; background-color: #eff6ff; }
+        .checkerboard {
+            background-image: linear-gradient(45deg, #e5e7eb 25%, transparent 25%), 
+                              linear-gradient(-45deg, #e5e7eb 25%, transparent 25%), 
+                              linear-gradient(45deg, transparent 75%, #e5e7eb 75%), 
+                              linear-gradient(-45deg, transparent 75%, #e5e7eb 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+            background-color: #ffffff;
+        }
+        .checkerboard-thumb {
+            background-image: linear-gradient(45deg, #e5e7eb 25%, transparent 25%), 
+                              linear-gradient(-45deg, #e5e7eb 25%, transparent 25%), 
+                              linear-gradient(45deg, transparent 75%, #e5e7eb 75%), 
+                              linear-gradient(-45deg, transparent 75%, #e5e7eb 75%);
+            background-size: 10px 10px;
+            background-position: 0 0, 0 5px, 5px -5px, -5px 0px;
+            background-color: #ffffff;
+        }
+        @keyframes scan {
+            0% { top: 0; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { top: 100%; opacity: 0; }
+        }
+        .scanner-line {
+            position: absolute;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: #3b82f6;
+            box-shadow: 0 0 10px #3b82f6, 0 0 20px #3b82f6, 0 0 40px #3b82f6;
+            animation: scan 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+            z-index: 10;
+        }
+        .glass-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(4px);
+            z-index: 5;
+        }
+        .thumb-active {
+            border-color: #2563eb !important;
+            box-shadow: 0 0 0 2px #bfdbfe;
+        }
+        body { transition: background-color 0.1s; }
+    </style>
+</head>
+<body class="bg-[#f3f4f6] text-gray-800 font-sans min-h-screen flex flex-col items-center overflow-x-hidden">
+    
+    <div id="upload-view" class="max-w-5xl w-full px-4 py-20 flex flex-col items-center">
+        <h1 class="text-5xl font-extrabold text-gray-900 mb-4 tracking-tight">Remove Background</h1>
+        <p class="text-lg text-gray-500 mb-12">Upload an image to automatically remove the background.</p>
+
+        <div id="drop-zone" class="dashed-border rounded-3xl bg-white p-20 text-center cursor-pointer transition-all duration-200 hover:border-blue-500 hover:shadow-md w-full max-w-2xl relative overflow-hidden">
+            <input type="file" id="file-input" class="hidden" accept="image/*">
+            <svg class="mx-auto h-16 w-16 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+            </svg>
+            <p class="text-xl font-bold text-gray-700 mb-2">Click or drag an image here</p>
+            <p class="text-sm text-gray-400">Supports JPG, PNG</p>
+        </div>
+    </div>
+
+    <div id="workspace-view" class="hidden w-full max-w-6xl px-4 py-8 flex flex-col items-center relative">
+        
+        <div id="edit-toolbar" class="hidden absolute top-24 left-1/2 -translate-x-1/2 bg-white rounded-full shadow-lg border border-gray-200 px-6 py-3 flex items-center space-x-6 z-40">
+            <div class="flex items-center space-x-4 border-r border-gray-200 pr-6">
+                <label class="flex items-center space-x-2 cursor-pointer">
+                    <input type="radio" name="brush-mode" value="erase" checked class="text-blue-600 focus:ring-blue-500 w-4 h-4">
+                    <span class="text-sm font-semibold text-gray-700">Erase</span>
+                </label>
+                <label class="flex items-center space-x-2 cursor-pointer">
+                    <input type="radio" name="brush-mode" value="restore" class="text-blue-600 focus:ring-blue-500 w-4 h-4">
+                    <span class="text-sm font-semibold text-gray-700">Restore</span>
+                </label>
+            </div>
+            <div class="flex items-center space-x-3 border-r border-gray-200 pr-4">
+                <span class="text-xs font-semibold text-gray-500 uppercase">Brush Size</span>
+                <input type="range" id="brush-size" min="5" max="100" value="30" class="w-32">
+            </div>
+            <div class="flex items-center space-x-3 border-r border-gray-200 pr-4">
+                <label class="flex items-center space-x-2 cursor-pointer" title="Uses AI to snap to edges. Turn off for exact manual erasing.">
+                    <input type="checkbox" id="smart-brush-toggle" checked class="text-blue-600 focus:ring-blue-500 w-4 h-4 rounded">
+                    <span class="text-sm font-semibold text-gray-700">AI Edge-Snap</span>
+                </label>
+            </div>
+            <div class="flex items-center space-x-3 pl-2">
+                <button id="edit-cancel" class="text-sm font-bold text-gray-500 hover:text-gray-700 px-3 py-1.5">Cancel</button>
+                <button id="edit-apply" class="text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-full shadow-sm">Done</button>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-full shadow-sm border border-gray-200 px-6 py-3 mb-6 w-full max-w-4xl flex items-center justify-between z-20 relative">
+            <div class="flex items-center space-x-4 text-sm font-semibold text-gray-600">
+                <button id="btn-edit" class="flex items-center space-x-2 hover:text-blue-600 transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                    <span>Erase/Restore</span>
+                </button>
+                <div class="w-px h-5 bg-gray-200 mx-2"></div>
+                <button id="btn-bg-img" class="flex items-center space-x-2 hover:text-blue-600 transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    <span>Background Image</span>
+                    <input type="file" id="bg-image-picker" class="hidden" accept="image/*">
+                </button>
+                <button class="flex items-center space-x-2 hover:text-blue-600 transition-colors relative" id="bg-color-btn">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path></svg>
+                    <span>Background Color</span>
+                    <input type="color" id="bg-color-picker" class="absolute opacity-0 w-full h-full cursor-pointer left-0 top-0">
+                </button>
+                <button id="btn-clear-bg" class="flex items-center space-x-1 text-red-500 hover:text-red-700 transition-colors ml-1 hidden" title="Clear Background">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                </button>
+            </div>
+            
+            <div class="flex items-center space-x-4">
+                <button id="toggle-view-btn" class="text-gray-400 hover:text-gray-700 transition-colors p-2" title="Toggle Original / Removed">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                </button>
+                <button id="download-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full font-bold text-sm transition-colors cursor-pointer shadow-sm flex items-center space-x-1">
+                    <span>Download</span>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                </button>
+            </div>
+        </div>
+
+        <div id="main-preview-container" class="relative w-full max-w-4xl bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden min-h-[500px] flex items-center justify-center checkerboard transition-all duration-200 cursor-default">
+            
+            <img id="faint-original" class="absolute inset-0 w-full h-full object-contain opacity-30 pointer-events-none hidden z-0">
+            
+            <img id="active-image" class="max-w-full max-h-[600px] object-contain drop-shadow-lg z-10 hidden">
+            
+            <div id="edit-loading" class="absolute inset-0 z-50 flex items-center justify-center bg-white/50 backdrop-blur-sm hidden">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-4 border-blue-600"></div>
+                <span class="absolute mt-20 text-blue-700 font-bold tracking-wide uppercase text-xs">AI Smart Brush...</span>
+            </div>
+
+            <div id="loading" class="absolute inset-0 z-20 flex items-center justify-center bg-white/50 backdrop-blur-sm hidden">
+                <img id="loading-bg-image" class="absolute inset-0 w-full h-full object-contain p-4 opacity-40 blur-sm">
+                <div class="glass-overlay"></div>
+                <div class="scanner-line"></div>
+                <div class="relative z-30 bg-white/90 px-8 py-4 rounded-2xl shadow-xl border border-blue-100 flex flex-col items-center">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-3"></div>
+                    <span class="text-blue-700 font-bold tracking-wide uppercase text-sm">Processing High Detail Edge Mask...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-8 flex items-center justify-center space-x-3" id="gallery-container">
+            <button id="upload-new-btn" class="w-14 h-14 rounded-xl border border-gray-300 flex items-center justify-center bg-white hover:bg-gray-50 text-gray-500 shadow-sm transition-colors text-2xl font-light shrink-0">
+                +
+            </button>
+        </div>
+    </div>
+
+    <button id="secret-btn" class="fixed bottom-4 left-4 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-full z-50 shadow-lg border-2 border-red-800">Secret Button</button>
+
+    <div id="secret-modal" class="fixed inset-0 bg-black/70 hidden flex items-center justify-center z-[60]">
+        <div id="secret-modal-content" class="bg-white p-8 rounded-xl shadow-2xl relative w-96 h-64 flex flex-col items-center justify-center overflow-hidden">
+            <button id="secret-close" class="absolute top-3 right-3 text-gray-500 hover:text-gray-800 p-1">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+            <h2 class="text-xl font-bold mb-4 pointer-events-none">Enter Secret Code</h2>
+            <div class="relative w-full h-16 flex justify-center items-center">
+                <input type="text" id="secret-input" data-secret-code="676767" disabled class="border-2 border-gray-300 rounded px-4 py-2 w-48 text-center bg-gray-100 cursor-not-allowed" placeholder="Code...">
+            </div>
+            <button id="secret-submit" class="mt-4 bg-gray-800 hover:bg-gray-900 text-white px-6 py-2 rounded shadow-md pointer-events-none opacity-50">Verify</button>
+        </div>
+    </div>
+
+    <script>
+        const uploadView = document.getElementById('upload-view');
+        const workspaceView = document.getElementById('workspace-view');
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const loading = document.getElementById('loading');
+        const activeImage = document.getElementById('active-image');
+        const loadingBgImage = document.getElementById('loading-bg-image');
+        const faintOriginal = document.getElementById('faint-original');
+        const galleryContainer = document.getElementById('gallery-container');
+        const downloadBtn = document.getElementById('download-btn');
+        const uploadNewBtn = document.getElementById('upload-new-btn');
+        const toggleViewBtn = document.getElementById('toggle-view-btn');
+        const mainPreviewContainer = document.getElementById('main-preview-container');
+        const editLoading = document.getElementById('edit-loading');
+        
+        const bgColorPicker = document.getElementById('bg-color-picker');
+        const bgImagePicker = document.getElementById('bg-image-picker');
+        const btnClearBg = document.getElementById('btn-clear-bg');
+        
+        const btnEdit = document.getElementById('btn-edit');
+        const editToolbar = document.getElementById('edit-toolbar');
+        const editCancel = document.getElementById('edit-cancel');
+        const editApply = document.getElementById('edit-apply');
+        const brushSize = document.getElementById('brush-size');
+        const modeRadios = document.querySelectorAll('input[name="brush-mode"]');
+        const smartBrushToggle = document.getElementById('smart-brush-toggle');
+        
+        const secretBtn = document.getElementById('secret-btn');
+        const secretModal = document.getElementById('secret-modal');
+        const secretModalContent = document.getElementById('secret-modal-content');
+        const secretClose = document.getElementById('secret-close');
+        const secretInput = document.getElementById('secret-input');
+        const secretSubmit = document.getElementById('secret-submit');
+        let modalDodges = 0;
+        let btnDodges = 0;
+        
+        let gallery = [];
+        let activeIndex = -1;
+        let showingOriginal = false;
+        
+        let isEditing = false;
+        let isDrawing = false;
+        let strokeCtx = null;
+        let backupURL = null;
+        
+        const strokeCanvas = document.createElement('canvas');
+        strokeCanvas.className = 'absolute max-w-full max-h-[600px] object-contain drop-shadow-lg z-20 hidden';
+        mainPreviewContainer.insertBefore(strokeCanvas, loading);
+
+        const brushCursor = document.createElement('div');
+        brushCursor.id = 'brush-cursor';
+        brushCursor.className = 'fixed rounded-full pointer-events-none z-50 hidden';
+        brushCursor.style.transform = 'translate(-50%, -50%)';
+        document.body.appendChild(brushCursor);
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => dropZone.addEventListener(eventName, preventDefaults, false));
+        function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
+        ['dragenter', 'dragover'].forEach(eventName => dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-over'), false));
+        ['dragleave', 'drop'].forEach(eventName => dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-over'), false));
+        dropZone.addEventListener('drop', handleDrop, false);
+        dropZone.addEventListener('click', () => fileInput.click());
+        uploadNewBtn.addEventListener('click', () => fileInput.click());
+        
+        fileInput.addEventListener('change', function() {
+            if (this.files && this.files[0]) processImage(this.files[0]);
+        });
+        function handleDrop(e) {
+            if (e.dataTransfer.files[0] && e.dataTransfer.files[0].type.startsWith('image/')) processImage(e.dataTransfer.files[0]);
+        }
+
+        document.getElementById('btn-bg-img').onclick = () => bgImagePicker.click();
+
+        bgImagePicker.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0] && activeIndex !== -1) {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    gallery[activeIndex].bgImage = ev.target.result;
+                    gallery[activeIndex].bgColor = null;
+                    applyBackground(activeIndex);
+                };
+                reader.readAsDataURL(e.target.files[0]);
+            }
+        });
+
+        bgColorPicker.addEventListener('input', (e) => {
+            if (activeIndex !== -1) {
+                gallery[activeIndex].bgColor = e.target.value;
+                gallery[activeIndex].bgImage = null;
+                applyBackground(activeIndex);
+            }
+        });
+
+        btnClearBg.addEventListener('click', () => {
+            if (activeIndex !== -1) {
+                gallery[activeIndex].bgImage = null;
+                gallery[activeIndex].bgColor = null;
+                applyBackground(activeIndex);
+            }
+        });
+
+        function applyBackground(index) {
+            const currentImg = gallery[index];
+            if (currentImg.bgImage) {
+                mainPreviewContainer.style.backgroundImage = `url(${currentImg.bgImage})`;
+                mainPreviewContainer.style.backgroundSize = 'cover';
+                mainPreviewContainer.style.backgroundPosition = 'center';
+                mainPreviewContainer.style.backgroundColor = '';
+                mainPreviewContainer.classList.remove('checkerboard');
+                btnClearBg.classList.remove('hidden');
+            } else if (currentImg.bgColor) {
+                mainPreviewContainer.style.backgroundImage = '';
+                mainPreviewContainer.style.backgroundColor = currentImg.bgColor;
+                mainPreviewContainer.classList.remove('checkerboard');
+                btnClearBg.classList.remove('hidden');
+            } else {
+                mainPreviewContainer.style.backgroundImage = '';
+                mainPreviewContainer.style.backgroundColor = '';
+                mainPreviewContainer.classList.add('checkerboard');
+                btnClearBg.classList.add('hidden');
+            }
+        }
+
+        toggleViewBtn.addEventListener('click', () => {
+            if (activeIndex === -1 || isEditing) return;
+            const currentImg = gallery[activeIndex];
+            if (!currentImg.processedObjectURL) return;
+            
+            showingOriginal = !showingOriginal;
+            activeImage.src = showingOriginal ? currentImg.originalObjectURL : currentImg.processedObjectURL;
+            
+            if (showingOriginal) {
+                activeImage.classList.remove('drop-shadow-lg');
+                mainPreviewContainer.style.backgroundImage = '';
+                mainPreviewContainer.style.backgroundColor = '';
+                mainPreviewContainer.classList.add('checkerboard');
+                btnClearBg.classList.add('hidden');
+            } else {
+                activeImage.classList.add('drop-shadow-lg');
+                applyBackground(activeIndex);
+            }
+        });
+
+        downloadBtn.addEventListener('click', () => {
+            if (activeIndex === -1 || isEditing) return;
+            const currentImg = gallery[activeIndex];
+            if (!currentImg.processedObjectURL) {
+                alert('Image is still processing.');
+                return;
+            }
+            
+            if (currentImg.bgImage || currentImg.bgColor) {
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                const procImg = new Image();
+                procImg.onload = () => {
+                    tempCanvas.width = procImg.width;
+                    tempCanvas.height = procImg.height;
+                    
+                    if (currentImg.bgColor) {
+                        tempCtx.fillStyle = currentImg.bgColor;
+                        tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+                    }
+                    if (currentImg.bgImage) {
+                        const bgImgObj = new Image();
+                        bgImgObj.onload = () => {
+                            const ratio = Math.max(tempCanvas.width / bgImgObj.width, tempCanvas.height / bgImgObj.height);
+                            const w = bgImgObj.width * ratio;
+                            const h = bgImgObj.height * ratio;
+                            tempCtx.drawImage(bgImgObj, (tempCanvas.width - w) / 2, (tempCanvas.height - h) / 2, w, h);
+                            tempCtx.drawImage(procImg, 0, 0);
+                            triggerDownload(tempCanvas.toDataURL('image/png'), currentImg.name);
+                        };
+                        bgImgObj.src = currentImg.bgImage;
+                        return;
+                    }
+                    
+                    tempCtx.drawImage(procImg, 0, 0);
+                    triggerDownload(tempCanvas.toDataURL('image/png'), currentImg.name);
+                };
+                procImg.src = currentImg.processedObjectURL;
+            } else {
+                triggerDownload(currentImg.processedObjectURL, currentImg.name);
+            }
+        });
+
+        function triggerDownload(url, name) {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `remove-bg-2_${name}.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        btnEdit.addEventListener('click', () => {
+            if (activeIndex === -1 || !gallery[activeIndex].processedObjectURL) return;
+            isEditing = true;
+            showingOriginal = false;
+            applyBackground(activeIndex);
+            
+            backupURL = gallery[activeIndex].processedObjectURL;
+            
+            activeImage.classList.remove('hidden');
+            strokeCanvas.classList.remove('hidden');
+            editToolbar.classList.remove('hidden');
+            strokeCanvas.style.cursor = 'none';
+            
+            faintOriginal.src = gallery[activeIndex].originalObjectURL;
+            faintOriginal.classList.remove('hidden');
+            
+            const procImg = new Image();
+            procImg.onload = () => {
+                strokeCanvas.width = procImg.width;
+                strokeCanvas.height = procImg.height;
+                strokeCtx = strokeCanvas.getContext('2d');
+            };
+            procImg.src = gallery[activeIndex].processedObjectURL;
+        });
+
+        function updateBrushCursor() {
+            if (!isEditing) return;
+            const size = parseInt(brushSize.value);
+            const mode = document.querySelector('input[name="brush-mode"]:checked').value;
+            
+            const rect = strokeCanvas.getBoundingClientRect();
+            if (rect.width === 0) return;
+            const scaleX = rect.width / strokeCanvas.width;
+            const screenRadius = size * scaleX;
+            
+            brushCursor.style.width = (screenRadius * 2) + 'px';
+            brushCursor.style.height = (screenRadius * 2) + 'px';
+            
+            if (mode === 'erase') {
+                brushCursor.style.backgroundColor = 'rgba(239, 68, 68, 0.4)';
+                brushCursor.style.border = '2px solid rgba(239, 68, 68, 0.8)';
+            } else {
+                brushCursor.style.backgroundColor = 'rgba(34, 197, 94, 0.4)';
+                brushCursor.style.border = '2px solid rgba(34, 197, 94, 0.8)';
+            }
+        }
+
+        strokeCanvas.addEventListener('mouseenter', () => {
+            if (isEditing) {
+                brushCursor.classList.remove('hidden');
+                updateBrushCursor();
+            }
+        });
+
+        strokeCanvas.addEventListener('mousemove', (e) => {
+            if (isEditing) {
+                brushCursor.style.left = e.clientX + 'px';
+                brushCursor.style.top = e.clientY + 'px';
+                if (isDrawing) draw(e);
+            }
+        });
+
+        strokeCanvas.addEventListener('mouseleave', () => {
+            brushCursor.classList.add('hidden');
+            isDrawing = false;
+        });
+
+        brushSize.addEventListener('input', updateBrushCursor);
+        modeRadios.forEach(r => r.addEventListener('change', updateBrushCursor));
+
+        function getPointerPos(e) {
+            const rect = strokeCanvas.getBoundingClientRect();
+            const scaleX = strokeCanvas.width / rect.width;
+            const scaleY = strokeCanvas.height / rect.height;
+            return {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+        }
+
+        function draw(e) {
+            if (!isDrawing || !isEditing) return;
+            const pos = getPointerPos(e);
+            const mode = document.querySelector('input[name="brush-mode"]:checked').value;
+            const size = parseInt(brushSize.value);
+            
+            strokeCtx.beginPath();
+            strokeCtx.arc(pos.x, pos.y, size, 0, Math.PI * 2);
+            strokeCtx.fillStyle = mode === 'erase' ? '#ff0000' : '#00ff00';
+            strokeCtx.fill();
+        }
+
+        strokeCanvas.addEventListener('mousedown', (e) => { 
+            isDrawing = true; 
+            draw(e); 
+        });
+
+        window.addEventListener('mouseup', () => { 
+            if (isDrawing) {
+                isDrawing = false; 
+                if (smartBrushToggle.checked) {
+                    applyMagicBrush();
+                } else {
+                    applyDumbBrush();
+                }
+            }
+        });
+        
+        async function applyDumbBrush() {
+            if (!isEditing) return;
+            const currentImg = gallery[activeIndex];
+            const mode = document.querySelector('input[name="brush-mode"]:checked').value;
+            
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = strokeCanvas.width;
+            tempCanvas.height = strokeCanvas.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            const procImg = new Image();
+            await new Promise(r => { procImg.onload = r; procImg.src = currentImg.processedObjectURL; });
+            tempCtx.drawImage(procImg, 0, 0);
+            
+            if (mode === 'erase') {
+                tempCtx.globalCompositeOperation = 'destination-out';
+                tempCtx.drawImage(strokeCanvas, 0, 0);
+            } else {
+                tempCtx.globalCompositeOperation = 'source-over';
+                
+                const smCanvas = document.createElement('canvas');
+                smCanvas.width = strokeCanvas.width;
+                smCanvas.height = strokeCanvas.height;
+                const smCtx = smCanvas.getContext('2d');
+                
+                smCtx.drawImage(strokeCanvas, 0, 0);
+                smCtx.globalCompositeOperation = 'source-in';
+                
+                const origImg = new Image();
+                await new Promise(r => { origImg.onload = r; origImg.src = currentImg.originalObjectURL; });
+                smCtx.drawImage(origImg, 0, 0, strokeCanvas.width, strokeCanvas.height);
+                
+                tempCtx.drawImage(smCanvas, 0, 0);
+            }
+            
+            const newBlob = await new Promise(r => tempCanvas.toBlob(r, 'image/png'));
+            const newUrl = URL.createObjectURL(newBlob);
+            
+            gallery[activeIndex].processedObjectURL = newUrl;
+            activeImage.src = newUrl;
+            strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+            renderGallery();
+        }
+
+        async function applyMagicBrush() {
+            if (!isEditing) return;
+            
+            const currentImg = gallery[activeIndex];
+            
+            const pixels = strokeCtx.getImageData(0, 0, strokeCanvas.width, strokeCanvas.height).data;
+            let hasStroke = false;
+            for (let i = 3; i < pixels.length; i += 4) {
+                if (pixels[i] > 0) { hasStroke = true; break; }
+            }
+            if (!hasStroke) return;
+
+            editLoading.classList.remove('hidden');
+
+            try {
+                const strokeBlob = await new Promise(r => strokeCanvas.toBlob(r, 'image/png'));
+                const origBlob = await fetch(currentImg.originalObjectURL).then(r => r.blob());
+                const currBlob = await fetch(currentImg.processedObjectURL).then(r => r.blob());
+                
+                const formData = new FormData();
+                formData.append('original', origBlob, 'orig.png');
+                formData.append('current_image', currBlob, 'curr.png');
+                formData.append('strokes', strokeBlob, 'strokes.png');
+                
+                const res = await fetch('/api/magic_brush', { method: 'POST', body: formData });
+                if (!res.ok) throw new Error('Magic brush failed');
+                
+                const newBlob = await res.blob();
+                const newUrl = URL.createObjectURL(newBlob);
+                
+                gallery[activeIndex].processedObjectURL = newUrl;
+                activeImage.src = newUrl;
+                
+                strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+                renderGallery();
+            } catch (e) {
+                console.error(e);
+                alert("Error applying smart brush. Ensure strokes are clear and not completely covering the image.");
+                strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+            } finally {
+                editLoading.classList.add('hidden');
+            }
+        }
+        
+        editCancel.addEventListener('click', () => {
+            isEditing = false;
+            if (backupURL) {
+                gallery[activeIndex].processedObjectURL = backupURL;
+                activeImage.src = backupURL;
+                renderGallery();
+            }
+            strokeCanvas.classList.add('hidden');
+            faintOriginal.classList.add('hidden');
+            editToolbar.classList.add('hidden');
+            brushCursor.classList.add('hidden');
+        });
+
+        editApply.addEventListener('click', () => {
+            isEditing = false;
+            strokeCanvas.classList.add('hidden');
+            faintOriginal.classList.add('hidden');
+            editToolbar.classList.add('hidden');
+            brushCursor.classList.add('hidden');
+            renderGallery();
+        });
+
+        function renderGallery() {
+            document.querySelectorAll('.gallery-thumb').forEach(el => el.remove());
+            gallery.forEach((imgObj, index) => {
+                const thumbDiv = document.createElement('div');
+                thumbDiv.className = `gallery-thumb w-14 h-14 rounded-xl border-2 p-0.5 cursor-pointer bg-white shrink-0 ${index === activeIndex ? 'thumb-active border-blue-600' : 'border-gray-200 opacity-70 hover:opacity-100'}`;
+                const imgEl = document.createElement('img');
+                imgEl.className = 'w-full h-full object-cover rounded-lg checkerboard-thumb';
+                imgEl.src = imgObj.processedObjectURL || imgObj.originalObjectURL;
+                thumbDiv.appendChild(imgEl);
+                thumbDiv.addEventListener('click', () => setActiveImage(index));
+                galleryContainer.appendChild(thumbDiv);
+            });
+        }
+
+        function setActiveImage(index) {
+            if (index < 0 || index >= gallery.length || isEditing) return;
+            activeIndex = index;
+            const currentImg = gallery[activeIndex];
+            
+            showingOriginal = false;
+            
+            if (currentImg.processedObjectURL) {
+                activeImage.src = currentImg.processedObjectURL;
+                activeImage.classList.remove('hidden');
+                activeImage.classList.add('drop-shadow-lg');
+                loading.classList.add('hidden');
+                loading.classList.remove('flex');
+            } else {
+                activeImage.src = currentImg.originalObjectURL;
+                activeImage.classList.remove('hidden');
+                activeImage.classList.remove('drop-shadow-lg');
+                loadingBgImage.src = currentImg.originalObjectURL;
+                loading.classList.remove('hidden');
+                loading.classList.add('flex');
+            }
+
+            applyBackground(activeIndex);
+            renderGallery();
+        }
+
+        async function processImage(file) {
+            uploadView.classList.add('hidden');
+            workspaceView.classList.remove('hidden');
+            workspaceView.classList.add('flex');
+            
+            const newImg = { name: file.name.replace(/\.[^/.]+$/, ""), originalObjectURL: '', processedObjectURL: null, bgColor: null, bgImage: null };
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                newImg.originalObjectURL = e.target.result;
+                gallery.push(newImg);
+                setActiveImage(gallery.length - 1);
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                try {
+                    const response = await fetch('/api/remove', { method: 'POST', body: formData });
+                    if (!response.ok) throw new Error('Failed');
+
+                    const blob = await response.blob();
+                    newImg.processedObjectURL = URL.createObjectURL(blob);
+                    
+                    if (activeIndex === gallery.indexOf(newImg)) setActiveImage(activeIndex);
+                    else renderGallery(); 
+                } catch (error) {
+                    alert('Error processing image.');
+                    gallery.splice(gallery.indexOf(newImg), 1);
+                    if (gallery.length > 0) setActiveImage(gallery.length - 1);
+                    else {
+                        uploadView.classList.remove('hidden');
+                        workspaceView.classList.add('hidden');
+                        workspaceView.classList.remove('flex');
+                    }
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        secretBtn.addEventListener('mouseenter', () => {
+            if (btnDodges < 4) {
+                secretBtn.style.transition = 'none';
+                secretBtn.style.position = 'fixed';
+                secretBtn.style.left = Math.random() * (window.innerWidth - 150) + 'px';
+                secretBtn.style.top = Math.random() * (window.innerHeight - 50) + 'px';
+                secretBtn.style.bottom = 'auto';
+                btnDodges++;
+            }
+        });
+
+        secretBtn.addEventListener('click', () => {
+            secretModal.classList.remove('hidden');
+            modalDodges = 0;
+            secretModalContent.style.transition = 'none';
+            secretModalContent.style.position = 'static';
+            secretModalContent.style.transform = 'none';
+            secretInput.value = '';
+            secretInput.disabled = true;
+            secretInput.classList.add('bg-gray-100', 'cursor-not-allowed');
+            secretSubmit.classList.add('pointer-events-none', 'opacity-50');
+            document.querySelector('#secret-modal h2').classList.add('pointer-events-none');
+        });
+
+        secretClose.addEventListener('click', () => {
+            secretModal.classList.add('hidden');
+        });
+
+        secretModalContent.addEventListener('mouseenter', () => {
+            if (modalDodges < 4) {
+                secretModalContent.style.transition = 'none';
+                secretModalContent.style.position = 'fixed';
+                secretModalContent.style.left = Math.random() * (window.innerWidth - 400) + 'px';
+                secretModalContent.style.top = Math.random() * (window.innerHeight - 300) + 'px';
+                secretModalContent.style.transform = 'none';
+                modalDodges++;
+            } else {
+                secretInput.disabled = false;
+                secretInput.classList.remove('bg-gray-100', 'cursor-not-allowed');
+                secretSubmit.classList.remove('pointer-events-none', 'opacity-50');
+                secretInput.focus();
+            }
+        });
+        
+        function startDisco() {
+            secretModal.classList.add('hidden');
+            
+            const ytIframe = document.createElement('iframe');
+            ytIframe.src = "https://www.youtube.com/embed/XqZsoesa55w?autoplay=1";
+            ytIframe.allow = "autoplay";
+            ytIframe.style.display = "none";
+            document.body.appendChild(ytIframe);
+            
+            const audios = [
+                "https://www.myinstants.com/media/sounds/vine-boom.mp3",
+                "https://www.myinstants.com/media/sounds/mlg-airhorn.mp3",
+                "https://www.myinstants.com/media/sounds/bass-drop.mp3"
+            ];
+
+            setInterval(() => {
+                const a = new Audio(audios[Math.floor(Math.random() * audios.length)]);
+                a.volume = 0.5;
+                a.play().catch(e=>{});
+            }, 600);
+
+            setInterval(() => {
+                document.body.style.backgroundColor = `rgb(${Math.random()*255},${Math.random()*255},${Math.random()*255})`;
+                document.body.style.filter = `invert(${Math.random() > 0.5 ? 100 : 0}%) hue-rotate(${Math.random()*360}deg)`;
+            }, 50);
+
+            const allElements = document.body.querySelectorAll('div, button, h1, p, img, svg, span, input');
+            setInterval(() => {
+                allElements.forEach(el => {
+                    if (Math.random() > 0.6) {
+                        el.style.transition = 'none';
+                        el.style.transform = `translate(${(Math.random()-0.5)*150}px, ${(Math.random()-0.5)*150}px) rotate(${(Math.random()-0.5)*720}deg) scale(${0.5 + Math.random() * 2.5})`;
+                    }
+                });
+            }, 80);
+
+            const memes = [
+                "https://media.tenor.com/x8v1oNUOmg4AAAAd/rickroll-roll.gif",
+                "https://media1.tenor.com/m/aKFaZBrZVQcAAAAd/spinning-cat.gif",
+                "https://media.tenor.com/pZqN-3rU6YkAAAAd/explosion-boom.gif",
+                "https://media1.tenor.com/m/8Y3yq6xVjT4AAAAd/spongebob-patrick.gif",
+                "https://media.tenor.com/4g_NfE_jVbUAAAAd/cat-dancing.gif",
+                "https://media.tenor.com/yheo1GGu3FwAAAAd/rick-astley.gif",
+                "https://media.tenor.com/Images/7a7395c52c1e27a92af35d3d0bc26bb5/tenor.gif"
+            ];
+            
+            setInterval(() => {
+                const img = document.createElement('img');
+                img.src = memes[Math.floor(Math.random() * memes.length)];
+                img.style.position = 'fixed';
+                img.style.width = (150 + Math.random() * 400) + 'px';
+                img.style.left = (Math.random() * window.innerWidth - 100) + 'px';
+                img.style.top = (Math.random() * window.innerHeight - 100) + 'px';
+                img.style.zIndex = '999999';
+                img.style.transform = `rotate(${(Math.random() - 0.5) * 360}deg) scale(${0.5 + Math.random() * 2})`;
+                img.style.pointerEvents = 'none';
+                document.body.appendChild(img);
+            }, 50);
+
+            setTimeout(() => {
+                alert("YOU SURVIVED THE CHAOS.");
+                location.reload();
+            }, 15000);
+        }
+
+        secretSubmit.addEventListener('click', () => {
+            if (secretInput.value === secretInput.dataset.secretCode) {
+                alert("omg a hacker get out");
+                window.location.href = "https://www.google.com";
+            } else if (secretInput.value === '767676') {
+                startDisco();
+            } else {
+                alert("Incorrect code.");
+            }
+        });
+    </script>
+</body>
+</html>
